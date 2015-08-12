@@ -1,0 +1,80 @@
+#!/usr/bin/python
+
+import sys
+import errno
+import os
+import json
+import geojson
+import csv
+import argparse
+
+from publicamundi.data.api import *
+
+ERROR_OK = 0
+ERROR_UNKNOWN = 1
+
+def parse_query(filename, text):
+    if not filename is None and os.path.isfile(filename):
+        with open(filename) as query_file:    
+            return json.load(query_file, cls=ShapelyJsonDecoder, encoding='utf-8')
+    if not text is None:
+        return json.loads(text, cls=ShapelyJsonDecoder, encoding='utf-8')
+        
+    return {}
+
+def execute(catalog, vectorstore, timeout, query, output=None, pretty=False, overwrite=False):
+    config = {
+        CONFIG_SQL_CATALOG : catalog,
+        CONFIG_SQL_DATA : vectorstore,
+        CONFIG_SQL_TIMEOUT : timeout * 1000
+    }
+
+    metadata = {}
+
+    if not output is None and os.path.exists(output):
+        if overwrite:
+            os.remove(output)
+        else:
+            raise DataException('File {output} already exists.'.format(output = output))
+                
+    query_executor = QueryExecutor()
+    result = query_executor.execute(config, metadata, query)
+    
+    if not output is None:
+        with open(output, 'w') as outfile:
+            if pretty:
+                geojson.dump(result['data'][0], outfile, cls=ShapelyGeoJsonEncoder, encoding='utf-8', indent=4, separators=(',', ': '))
+            else:
+                geojson.dump(result['data'][0], outfile, cls=ShapelyGeoJsonEncoder, encoding='utf-8')
+    else:
+        print result
+        
+
+try:
+    parser = argparse.ArgumentParser(description='Executes a query using the Data API')
+    
+    parser.add_argument('-catalog', '-c', metavar='database connection string', type=str, help='CKAN catalog database connection string', required=True)
+    parser.add_argument('-vectorstore', '-v', metavar='database connection string', type=str, help='PublicaMundi extension Vector Storer database connection string', required=True)
+    parser.add_argument('-timeout', '-t', metavar='N', type=int, help='Database commands timeout after N seconds', required=False, default=30)
+    
+    parser.add_argument('-output', '-o', metavar='path', type=str, help='''Filename where the results should be saved. If no -output argument\
+                                                                               is specified, the output is printed''', required=False)
+    parser.add_argument('-force', '-f', action='store_true', help='If -output file already exists, it is overwriten.')
+    parser.add_argument('-pretty', '-p', action='store_true', help='JSON elements and object members will be pretty-printed')
+    
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-input', '-i', metavar='path', type=str, help='''Filename that contains a query formatted as a JSON string. Arguments -input and -query\
+                                                                         are  mutually exclusive''', required=False)
+    group.add_argument('-query', '-q', metavar='text', type=str, help='Query formatted as a JSON string. Arguments -input and -query are  mutually exclusive', required=False)
+
+    args = parser.parse_args()
+
+    query = parse_query(args.input, args.query)
+
+    execute(args.catalog, args.vectorstore, args.timeout, query, args.output, args.pretty, args.force)
+    
+    sys.exit(ERROR_OK)
+except Exception as ex:
+    print 'Query execution has failed: ' + str(ex)
+
+sys.exit(ERROR_UNKNOWN)

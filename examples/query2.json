@@ -1,0 +1,98 @@
+{
+  "queue": [
+    {
+      "resources": [
+        "97569331-a2fb-45eb-92c9-064ef4f70d38",
+        "ad815665-ec88-4e81-a27a-8d72cffa7dd2"
+      ],
+      "fields": [
+        {
+          "name": "name_eng"
+        },
+        {
+          "name": "city_eng"
+        },
+        {
+          "name": "nisos_eng"
+        },
+        "dimos_eng",
+        {
+          "name": "pop"
+        },
+        {
+          "resource": "ad815665-ec88-4e81-a27a-8d72cffa7dd2",
+          "name": "NOMOS"
+        },
+        {
+          "resource": "ad815665-ec88-4e81-a27a-8d72cffa7dd2",
+          "name": "the_geom"
+        },
+        "DESCRIPT",
+        "REGION"
+      ],
+      "filters": [
+        {
+          "operator": "LESS",
+          "arguments": [
+            {
+              "name": "pop"
+            },
+            3000
+          ]
+        },
+        {
+          "operator": "DISTANCE",
+          "arguments": [
+            {
+              "resource": "97569331-a2fb-45eb-92c9-064ef4f70d38",
+              "name": "the_geom"
+            },
+            {
+              "resource": "ad815665-ec88-4e81-a27a-8d72cffa7dd2",
+              "name": "the_geom"
+            },
+            "LESS",
+            5000
+          ]
+        },
+        {
+          "operator": "CONTAINS",
+          "arguments": [
+            {
+              "type": "Polygon",
+              "coordinates": [
+                [
+                  [
+                    2687295.037100175,
+                    4520261.073751386
+                  ],
+                  [
+                    2687295.037100175,
+                    4368610.009633597
+                  ],
+                  [
+                    2914771.6332768593,
+                    4368610.009633597
+                  ],
+                  [
+                    2914771.6332768593,
+                    4520261.073751386
+                  ],
+                  [
+                    2687295.037100175,
+                    4520261.073751386
+                  ]
+                ]
+              ]
+            },
+            {
+              "resource": "ad815665-ec88-4e81-a27a-8d72cffa7dd2",
+              "name": "the_geom"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "format": "GeoJSON"
+}

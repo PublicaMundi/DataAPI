@@ -1,0 +1,31 @@
+{
+  "queue": [
+    {
+      "resources": [
+        {
+          "name": "97569331-a2fb-45eb-92c9-064ef4f70d38",
+          "alias": "table1"
+        }
+      ],
+      "filters": [
+        {
+          "operator": "GREATER",
+          "arguments": [
+            {
+              "name": "pop"
+            },
+            10000
+          ]
+        }
+      ],
+      "sort": [
+        {
+          "name": "pop",
+          "desc": true
+        }
+      ],
+      "offset": 20,
+      "limit": 50
+    }
+  ]
+}
