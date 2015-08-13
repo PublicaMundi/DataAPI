@@ -23,7 +23,7 @@ def read(*names, **kwargs):
     ).read()
 
 
-version = '1.0b1'
+version = '1.0.0'
 
 
 #http://stackoverflow.com/questions/14399534/how-can-i-reference-requirements-txt-for-the-install-requires-kwarg-in-setuptool

@@ -71,6 +71,8 @@ CONFIG_SQL_CATALOG = 'sqlalchemy.catalog'
 CONFIG_SQL_DATA = 'sqlalchemy.vectorstore'
 CONFIG_SQL_TIMEOUT = 'timeout'
 
+DEFAULT_SQL_TIMEOUT = 30000
+
 # See http://www.postgresql.org/docs/9.3/static/errcodes-appendix.html
 _PG_ERR_CODE = {
     'query_canceled': '57014',
@@ -208,7 +210,7 @@ class QueryExecutor:
         connection_data = context['connection_data']
 
         srid = context['crs']
-        timeout = config[CONFIG_SQL_TIMEOUT]
+        timeout = config[CONFIG_SQL_TIMEOUT] if CONFIG_SQL_TIMEOUT in config else DEFAULT_SQL_TIMEOUT
         offset = 0
         limit = MAX_RESULT_ROWS
 
@@ -523,13 +525,15 @@ class QueryExecutor:
         # Execute query and aggregate execution time
         start_time = time.time()
         
-        connection_data.execute(u'SET LOCAL statement_timeout TO {0};'.format(timeout))
+        command_timeout = max(int(timeout - (context['elapsed_time'] * 1000)), 1000)
+        
+        connection_data.execute(u'SET LOCAL statement_timeout TO {0};'.format(command_timeout))
         records = connection_data.execute(sql, values)
 
         elapsed_time = min((time.time() - start_time), 1)
         context['elapsed_time'] = context['elapsed_time'] + elapsed_time
        
-        if context['elapsed_time'] > (config[CONFIG_SQL_TIMEOUT] / 1000):
+        if context['elapsed_time'] >= (config[CONFIG_SQL_TIMEOUT] / 1000):
             raise DataException(u'Execution timeout has expired. Current timeout value is {timeout} seconds.'.format(
                 timeout = (config[CONFIG_SQL_TIMEOUT] / 1000)
             ))
