@@ -88,7 +88,7 @@ class DataException(Exception):
 
 class QueryExecutor:
 
-    def execute(self, config, metadata={}, query={}, action=ACTION_QUERY):
+    def execute(self, config, query, action=ACTION_QUERY, metadata={}):
         try:
             engine_ckan = None
             connection_ckan = None

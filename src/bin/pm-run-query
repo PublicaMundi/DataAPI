@@ -38,7 +38,7 @@ def execute(catalog, vectorstore, timeout, query, output=None, pretty=False, ove
             raise DataException('File {output} already exists.'.format(output = output))
                 
     query_executor = QueryExecutor()
-    result = query_executor.execute(config, metadata, query)
+    result = query_executor.execute(config, query)
     
     if not output is None:
         with open(output, 'w') as outfile:
