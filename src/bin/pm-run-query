@@ -1,5 +1,7 @@
 #!/usr/bin/python
 
+import logging
+import logging.config
 import sys
 import errno
 import os
@@ -12,6 +14,12 @@ from publicamundi.data.api import *
 
 ERROR_OK = 0
 ERROR_UNKNOWN = 1
+
+def configure_logging(filename):
+    if filename is None:
+        print 'Logging is not configured.'
+    else:
+        logging.config.fileConfig(filename)
 
 def parse_query(filename, text):
     if not filename is None and os.path.isfile(filename):
@@ -62,6 +70,8 @@ try:
     parser.add_argument('-force', '-f', action='store_true', help='If -output file already exists, it is overwriten.')
     parser.add_argument('-pretty', '-p', action='store_true', help='JSON elements and object members will be pretty-printed')
     
+    parser.add_argument('-log', '-l', metavar='logging configuration file', type=str, help='Configuration file', required=False)
+    
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-input', '-i', metavar='path', type=str, help='''Filename that contains a query formatted as a JSON string. Arguments -input and -query\
                                                                          are  mutually exclusive''', required=False)
@@ -69,6 +79,8 @@ try:
 
     args = parser.parse_args()
 
+    configure_logging(args.log)
+    
     query = parse_query(args.input, args.query)
 
     execute(args.catalog, args.vectorstore, args.timeout, query, args.output, args.pretty, args.force)

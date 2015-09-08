@@ -3,7 +3,7 @@ import logging
 from sqlalchemy import create_engine
 from sqlalchemy.sql import text
 from sqlalchemy.engine import ResultProxy
-from sqlalchemy.exc import ProgrammingError, IntegrityError, DBAPIError, DataError
+from sqlalchemy.exc import DBAPIError
 
 import json
 import geojson
@@ -20,31 +20,15 @@ import time
 log = logging.getLogger(__name__)
 
 # Available formats
-FORMAT_JSON = 'JSON'
-FORMAT_GEOJSON = 'GeoJSON'
-FORMAT_ESRI = 'ESRI Shapefile'
-FORMAT_GML = 'GML'
-FORMAT_KML = 'KML'
-FORMAT_GPKG = 'GPKG'
-FORMAT_DXF = 'DXF'
-FORMAT_CSV = 'CSV'
-FORMAT_PDF = 'PDF'
+QUERY_FORMAT_JSON = 'JSON'
+QUERY_FORMAT_GEOJSON = 'GeoJSON'
 
-# Supported formats for queries
-FORMAT_SUPPORT_QUERY = [FORMAT_JSON , FORMAT_GEOJSON]
-
-# Supported formats for export operations
-FORMAT_SUPPORT_EXPORT = [FORMAT_ESRI, FORMAT_GML, FORMAT_KML, FORMAT_DXF, FORMAT_CSV, FORMAT_GEOJSON, FORMAT_PDF, FORMAT_GPKG]
-
-# Export extensions (1-to-1 mapping with export supported formats)
-EXTENSION_EXPORT = ['shp', 'gml', 'kml', 'dxf', 'csv', 'geojson', 'pdf', 'gpkg']
+# Supported formats
+FORMAT_SUPPORT_QUERY = [QUERY_FORMAT_JSON , QUERY_FORMAT_GEOJSON]
 
 CRS_SUPPORTED = ['EPSG:900913', 'EPSG:3857', 'EPSG:4326', 'EPSG:2100', 'EPSG:4258']
 CRS_DEFAULT_DATABASE = 2100
 CRS_DEFAULT_OUTPUT = 3857
-
-ACTION_QUERY = 'QUERY'
-ACTION_EXPORT = 'EXPORT'
 
 OP_EQ = 'EQUAL'
 OP_NOT_EQ = 'NOT_EQUAL'
@@ -80,17 +64,17 @@ _PG_ERR_CODE = {
     'syntax_error': '42601',
     'permission_denied': '42501'
 }
-
 class DataException(Exception):
-    def __init__(self, message):
+    def __init__(self, message, innerException=None):
         self.message = message
+        self.innerException = innerException
 
     def __str__(self):
         return repr(self.message)
 
 class QueryExecutor:
 
-    def execute(self, config, query, action=ACTION_QUERY, metadata={}):
+    def execute(self, config, query, metadata={}):
         try:
             engine_ckan = None
             connection_ckan = None
@@ -98,27 +82,8 @@ class QueryExecutor:
             engine_data = None
             connection_data = None
 
-            output_format = None
+            output_format = QUERY_FORMAT_GEOJSON
             crs = CRS_DEFAULT_OUTPUT
-
-            # Set format
-            if action == ACTION_QUERY:
-                output_format = FORMAT_GEOJSON
-
-                if 'format' in query:
-                    if not query['format'] in FORMAT_SUPPORT_QUERY:
-                        raise DataException('Output format {format} is not supported for query results.'.format(format = query['format']))
-
-                    output_format = query['format']
-
-            if action == ACTION_EXPORT:
-                output_format = FORMAT_ESRI
-
-                if 'format' in query:
-                    if not query['format'] in FORMAT_SUPPORT_EXPORT:
-                        raise DataException('Output format {format} is not supported for export results.'.format(format = query['format']))
-
-                    output_format = query['format']
 
             # Set CRS
             if 'crs' in query:
@@ -127,25 +92,19 @@ class QueryExecutor:
 
                 crs = int(query['crs'].split(':')[1])
 
+            # Set format
+            if 'format' in query:
+                if not query['format'] in FORMAT_SUPPORT_QUERY:
+                    raise DataException('Output format {format} is not supported for query results.'.format(format = query['format']))
+
+                output_format = query['format']
+
             # Get queue
             if not 'queue' in query:
                 raise DataException('Parameter queue is required.')
 
             if not type(query['queue']) is list or len(query['queue']) == 0:
                 raise DataException('Parameter queue should be a list with at least one item.')
-
-            # Check filenames
-            files = None
-            if action == ACTION_EXPORT and 'files' in query:
-                if not type(query['files']) is list:
-                    raise DataException('Parameter files should be a list with at least one item.')
-                if len(query['queue']) <> len(query['files']):
-                    raise DataException('Arrays queue and files should be of the same length.')
-                for i in range(0, len(query['files'])):
-                    query['files'][i] = self._format_filename(query['files'][i])
-                if  len(query['files'])!=len(set(query['files'])):
-                    raise DataException('Filenames must be unique.')
-                files = query['files']
 
             # Initialize database
             engine_ckan = create_engine(config[CONFIG_SQL_CATALOG], echo=False)
@@ -155,7 +114,6 @@ class QueryExecutor:
 
             # Initialize execution context
             context = {
-                'action' : action,
                 'query' : None, 
                 'output_format' : output_format,
                 'crs' : crs,
@@ -163,7 +121,7 @@ class QueryExecutor:
                 'engine_data' : engine_data,
                 'connection_ckan' : connection_ckan,
                 'connection_data' : connection_data,
-                'resources' : self._get_resources(config, connection_ckan),
+                'resources' : self.getResources(config, connection_ckan),
                 'metadata' : metadata,
                 'elapsed_time' : 0
             }
@@ -176,7 +134,7 @@ class QueryExecutor:
 
                 partial_result = self._execute_query(config, context)
 
-                if action == ACTION_EXPORT or output_format == FORMAT_GEOJSON:
+                if output_format == QUERY_FORMAT_GEOJSON:
                     partial_result = {
                         'features': partial_result, 
                         'type': 'FeatureCollection'
@@ -185,13 +143,26 @@ class QueryExecutor:
                 query_result.append(partial_result)
 
             return {
-                'action' : action,
                 'data' : query_result,
-                'format' : output_format,
-                'files' : files,
                 'crs' : crs,
-                'metadata' : context['metadata']
+                'metadata' : context['metadata'],
+                'format' : output_format
             }
+        except DataException as apiEx:
+            raise
+        except DBAPIError as dbEx:
+            print dbEx.message
+            log.error(dbEx)
+
+            message = 'Unhandled exception has occured.'
+            if dbEx.orig.pgcode == _PG_ERR_CODE['query_canceled']:
+                message = 'Execution exceeded timeout.'
+
+            raise DataException(message, dbEx)
+        except Exception as ex:
+            log.error(ex)
+
+            raise DataException('Unhandled exception has occured.', ex)
         finally:
             if not connection_ckan is None:
                 connection_ckan.close()
@@ -199,7 +170,6 @@ class QueryExecutor:
                 connection_data.close()
 
     def _execute_query(self, config, context):
-        action = context['action']
         query = context['query']
         output_format = context['output_format']
         
@@ -285,7 +255,7 @@ class QueryExecutor:
                     db_resource['alias'] = 't{index}'.format(index = (len(context['metadata'].keys()) + 1))
 
                     # Add fields
-                    db_fields = self._resource_describe(config, connection_data, resource_name)
+                    db_fields = self.describeResource(config, connection_data, resource_name)
                     db_resource['srid'] = db_fields['srid']
                     db_resource['geometry_column'] = db_fields['geometry_column']
                     db_resource['fields'] = db_fields['fields']
@@ -400,7 +370,7 @@ class QueryExecutor:
                 ))
 
         # Check the number of geometry columns
-        if output_format == FORMAT_GEOJSON:
+        if output_format == QUERY_FORMAT_GEOJSON:
             count_geom_columns = reduce(lambda x, y: x+y, [1 if parsed_query['fields'][field]['is_geom'] else 0 for field in parsed_query['fields'].keys()])
             if count_geom_columns != 1:
                 raise DataException(u'Format {format} requires exactly one geometry column'.format(
@@ -538,7 +508,7 @@ class QueryExecutor:
                 timeout = (config[CONFIG_SQL_TIMEOUT] / 1000)
             ))
 
-        if action == ACTION_EXPORT or output_format == FORMAT_GEOJSON:
+        if output_format == QUERY_FORMAT_GEOJSON:
             # Add GeoJSON records
             feature_id = 0
             for r in records:
@@ -947,25 +917,7 @@ class QueryExecutor:
 
         return resources
 
-    #https://gist.github.com/seanh/93666
-    def _format_filename(self, filename):
-        """Take a string and return a valid filename constructed from the string.
-    Uses a whitelist approach: any characters not present in valid_chars are
-    removed. Also spaces are replaced with underscores.
-     
-    Note: this method may produce invalid filenames such as ``, `.` or `..`
-    When I use this method I prepend a date string like '2009_01_15_19_46_32_'
-    and append a file extension like '.txt', so I avoid the potential of using
-    an invalid filename.
-     
-    """
-        valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
-        filename = ''.join(c for c in filename if c in valid_chars)
-        filename = filename.replace(' ','_') # I don't like spaces in filenames.
-        return filename
-
-
-    def _get_resources(self, config, connection=None):
+    def getResources(self, config, connection=None):
         engine = None
         auto_close = False
         
@@ -1048,7 +1000,7 @@ class QueryExecutor:
 
         return result
 
-    def _resource_describe(self, config, connection=None, id=None):
+    def describeResource(self, config, connection=None, id=None):
         engine = None
         auto_close = False
         
