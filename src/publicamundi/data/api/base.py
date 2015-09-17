@@ -114,7 +114,7 @@ class QueryExecutor:
 
             # Initialize execution context
             context = {
-                'query' : None, 
+                'query' : None,
                 'output_format' : output_format,
                 'crs' : crs,
                 'engine_ckan' : engine_ckan,
@@ -136,7 +136,7 @@ class QueryExecutor:
 
                 if output_format == QUERY_FORMAT_GEOJSON:
                     partial_result = {
-                        'features': partial_result, 
+                        'features': partial_result,
                         'type': 'FeatureCollection'
                     }
 
@@ -172,10 +172,10 @@ class QueryExecutor:
     def _execute_query(self, config, context):
         query = context['query']
         output_format = context['output_format']
-        
+
         engine_ckan = context['engine_ckan']
         connection_ckan = context['connection_ckan']
-        
+
         engine_data = context['engine_data']
         connection_data = context['connection_data']
 
@@ -223,10 +223,10 @@ class QueryExecutor:
 
         for query_resource in query['resources']:
             db_resource = None
-            
+
             resource_name = None
             resource_alias = None
-            
+
             if type(query_resource) is dict:
                 if 'name' in query_resource:
                     resource_name = query_resource['name']
@@ -249,7 +249,7 @@ class QueryExecutor:
 
             if resource_name in context['resources']:
                 db_resource = context['resources'][resource_name]
-                
+
                 if not resource_name in context['metadata']:
                     # Update alias. Alias is reseted for every query execution
                     db_resource['alias'] = 't{index}'.format(index = (len(context['metadata'].keys()) + 1))
@@ -259,12 +259,12 @@ class QueryExecutor:
                     db_resource['srid'] = db_fields['srid']
                     db_resource['geometry_column'] = db_fields['geometry_column']
                     db_resource['fields'] = db_fields['fields']
-               
+
                     # Add resource to global metadata
                     context['metadata'][resource_name] = db_resource
                 else:
                     db_resource = context['metadata'][resource_name]
-                    
+
                 parsed_query['resources'][resource_name] = {
                     'table' : db_resource['table'],
                     'alias' : db_resource['alias']
@@ -413,7 +413,7 @@ class QueryExecutor:
                     # Check if a field name or an alias is specified. In the latter case, set the database field name
                     if sort_name in parsed_query['fields']:
                         if parsed_query['fields'][sort_name]['name'] != sort_name:
-                           sort_name = parsed_query['fields'][sort_name]['name'] 
+                           sort_name = parsed_query['fields'][sort_name]['name']
 
                     # Set resource if missing
                     if sort_resource is None:
@@ -467,7 +467,7 @@ class QueryExecutor:
                 ))
 
         # From clause tables
-        tables = [ '"' + parsed_query['resources'][r]['table'] + '" as ' + parsed_query['resources'][r]['alias'] for r in parsed_query['resources']]                  
+        tables = [ '"' + parsed_query['resources'][r]['table'] + '" as ' + parsed_query['resources'][r]['alias'] for r in parsed_query['resources']]
 
         # Where clause
         if len(parsed_query['filters']) > 0:
@@ -475,7 +475,7 @@ class QueryExecutor:
                 wheres.append(filter_tuple[0])
                 values += filter_tuple[1:]
 
-        if len(wheres) > 0: 
+        if len(wheres) > 0:
             where_clause = u'where ' + u' AND '.join(wheres)
 
         # Order by clause
@@ -491,18 +491,18 @@ class QueryExecutor:
             limit = limit,
             offset = offset
         )
-        
+
         # Execute query and aggregate execution time
         start_time = time.time()
-        
+
         command_timeout = max(int(timeout - (context['elapsed_time'] * 1000)), 1000)
-        
+
         connection_data.execute(u'SET LOCAL statement_timeout TO {0};'.format(command_timeout))
         records = connection_data.execute(sql, values)
 
         elapsed_time = min((time.time() - start_time), 1)
         context['elapsed_time'] = context['elapsed_time'] + elapsed_time
-       
+
         if context['elapsed_time'] >= (config[CONFIG_SQL_TIMEOUT] / 1000):
             raise DataException(u'Execution timeout has expired. Current timeout value is {timeout} seconds.'.format(
                 timeout = (config[CONFIG_SQL_TIMEOUT] / 1000)
@@ -558,13 +558,13 @@ class QueryExecutor:
             if f['operator'] in COMPARE_OPERATORS:
                 index = COMPARE_OPERATORS.index(f['operator'])
                 return self._create_filter_compare(metadata, mapping, f, f['operator'], COMPARE_EXPRESSIONS[index])
-                
+
             if f['operator'] in SPATIAL_OPERATORS:
                 return self._create_filter_spatial(metadata, mapping, f, f['operator'])
-                
+
         except ValueError as ex:
             raise DataException('Operator {operator} is not supported.'.format(operator = f['operator']))
-            
+
         return None
 
     def _create_filter_compare(self, metadata, mapping, f, operator, expression):
@@ -631,32 +631,32 @@ class QueryExecutor:
 
     def _create_filter_spatial(self, metadata, mapping, f, operator):
         if operator == OP_AREA:
-            if len(f['arguments']) != 3:  
-                raise DataException('Operator {operator} expects three arguments.'.format(operator = operator))        
+            if len(f['arguments']) != 3:
+                raise DataException('Operator {operator} expects three arguments.'.format(operator = operator))
             return self._create_filter_area(metadata, mapping, f, operator)
         elif operator == OP_DISTANCE:
-            if len(f['arguments']) != 4:  
-                raise DataException('Operator {operator} expects four arguments.'.format(operator = operator))                
+            if len(f['arguments']) != 4:
+                raise DataException('Operator {operator} expects four arguments.'.format(operator = operator))
             return self._create_filter_distance(metadata, mapping, f, operator)
         elif operator == OP_CONTAINS:
-            if len(f['arguments']) != 2:  
-                raise DataException('Operator {operator} expects two.'.format(operator = operator))        
+            if len(f['arguments']) != 2:
+                raise DataException('Operator {operator} expects two.'.format(operator = operator))
             return self._create_filter_spatial_relation(metadata, mapping, f, operator, 'ST_Contains')
         elif operator == OP_INTERSECTS:
             if len(f['arguments']) != 2:
-                raise DataException('Operator {operator} expects two arguments.'.format(operator = operator))        
+                raise DataException('Operator {operator} expects two arguments.'.format(operator = operator))
             return self._create_filter_spatial_relation(metadata, mapping, f, operator, 'ST_Intersects')
-            
+
     def _create_filter_area(self, metadata, mapping, f, operator):
         arg1 = f['arguments'][0]
         arg2 = f['arguments'][1]
         arg3 = f['arguments'][2]
-        
+
         if arg2 in COMPARE_OPERATORS:
             arg2 = COMPARE_EXPRESSIONS[COMPARE_OPERATORS.index(arg2)]
         else:
             raise DataException('Expression {expression} for operator {operator} is not valid.'.format(expression = arg2, operator = operator))
-                
+
         arg1_is_field = self._is_field(metadata, mapping, arg1)
         arg1_srid = CRS_DEFAULT_DATABASE
         arg1_is_field_geom = self._is_field_geom(metadata, mapping, arg1)
@@ -676,7 +676,7 @@ class QueryExecutor:
                 field = arg1['name']
             )
 
-            if arg1_srid != CRS_DEFAULT_DATABASE: 
+            if arg1_srid != CRS_DEFAULT_DATABASE:
                 aliased_arg1 = 'ST_Transform({field}, {srid})'.format(
                 field = aliased_arg1,
                 srid = CRS_DEFAULT_DATABASE
@@ -696,7 +696,7 @@ class QueryExecutor:
             arg3 = COMPARE_EXPRESSIONS[COMPARE_OPERATORS.index(arg3)]
         else:
             raise DataException('Expression {expression} for operator {operator} is not valid.'.format(expression = arg3, operator = operator))
-                
+
         arg1_is_field = self._is_field(metadata, mapping, arg1)
         arg2_is_field = self._is_field(metadata, mapping, arg2)
 
@@ -728,7 +728,7 @@ class QueryExecutor:
                 table = metadata[mapping[arg1['resource']]]['alias'],
                 field = arg1['name']
             )
-            if arg1_srid != CRS_DEFAULT_DATABASE: 
+            if arg1_srid != CRS_DEFAULT_DATABASE:
                 aliased_arg1 = 'ST_Transform({field}, {srid})'.format(
                 field = aliased_arg1,
                 srid = CRS_DEFAULT_DATABASE
@@ -738,7 +738,7 @@ class QueryExecutor:
                 table = metadata[mapping[arg2['resource']]]['alias'],
                 field = arg2['name']
             )
-            if arg2_srid != CRS_DEFAULT_DATABASE: 
+            if arg2_srid != CRS_DEFAULT_DATABASE:
                 aliased_arg2 = 'ST_Transform({field}, {srid})'.format(
                 field = aliased_arg2,
                 srid = CRS_DEFAULT_DATABASE
@@ -749,7 +749,7 @@ class QueryExecutor:
                 table = metadata[mapping[arg1['resource']]]['alias'],
                 field = arg1['name']
             )
-            if arg1_srid != CRS_DEFAULT_DATABASE: 
+            if arg1_srid != CRS_DEFAULT_DATABASE:
                 aliased_arg1 = 'ST_Transform({field}, {srid})'.format(
                 field = aliased_arg1,
                 srid = CRS_DEFAULT_DATABASE
@@ -760,23 +760,23 @@ class QueryExecutor:
                 table = metadata[mapping[arg2['resource']]]['alias'],
                 field = arg2['name']
             )
-            if arg2_srid != CRS_DEFAULT_DATABASE: 
+            if arg2_srid != CRS_DEFAULT_DATABASE:
                 aliased_arg2 = 'ST_Transform({field}, {srid})'.format(
                 field = aliased_arg2,
                 srid = CRS_DEFAULT_DATABASE
             )
-            return ('(ST_Distance(' + aliased_arg2 + ', ST_Transform(ST_GeomFromText(%s, 3857), ' + 
+            return ('(ST_Distance(' + aliased_arg2 + ', ST_Transform(ST_GeomFromText(%s, 3857), ' +
                     str(CRS_DEFAULT_DATABASE) + ')) ' + arg3 + ' %s)', shapely.wkt.dumps(arg1), arg4)
         else:
-            return ('(ST_Distance(ST_Transform(ST_GeomFromText(%s, 3857), ' + 
-                    str(CRS_DEFAULT_DATABASE) + 
-                    '), ST_Transform(ST_GeomFromText(%s, 3857), ' + 
+            return ('(ST_Distance(ST_Transform(ST_GeomFromText(%s, 3857), ' +
+                    str(CRS_DEFAULT_DATABASE) +
+                    '), ST_Transform(ST_GeomFromText(%s, 3857), ' +
                     str(CRS_DEFAULT_DATABASE) + ')) ' + arg3 + ' %s)', shapely.wkt.dumps(arg1), shapely.wkt.dumps(arg2), arg4)
 
     def _create_filter_spatial_relation(self, metadata, mapping, f, operator, spatial_operator):
         arg1 = f['arguments'][0]
         arg2 = f['arguments'][1]
-        
+
         arg1_is_field = self._is_field(metadata, mapping, arg1)
         arg2_is_field = self._is_field(metadata, mapping, arg2)
 
@@ -805,7 +805,7 @@ class QueryExecutor:
                 table = metadata[mapping[arg1['resource']]]['alias'],
                 field = arg1['name']
             )
-            if arg1_srid != CRS_DEFAULT_DATABASE: 
+            if arg1_srid != CRS_DEFAULT_DATABASE:
                 aliased_arg1 = 'ST_Transform({field}, {srid})'.format(
                 field = aliased_arg1,
                 srid = CRS_DEFAULT_DATABASE
@@ -815,7 +815,7 @@ class QueryExecutor:
                 table = metadata[mapping[arg2['resource']]]['alias'],
                 field = arg2['name']
             )
-            if arg2_srid != CRS_DEFAULT_DATABASE: 
+            if arg2_srid != CRS_DEFAULT_DATABASE:
                 aliased_arg2 = 'ST_Transform({field}, {srid})'.format(
                 field = aliased_arg2,
                 srid = CRS_DEFAULT_DATABASE
@@ -826,7 +826,7 @@ class QueryExecutor:
                 table = metadata[mapping[arg1['resource']]]['alias'],
                 field = arg1['name']
             )
-            if arg1_srid != CRS_DEFAULT_DATABASE: 
+            if arg1_srid != CRS_DEFAULT_DATABASE:
                 aliased_arg1 = 'ST_Transform({field}, {srid})'.format(
                 field = aliased_arg1,
                 srid = CRS_DEFAULT_DATABASE
@@ -837,18 +837,18 @@ class QueryExecutor:
                 table = metadata[mapping[arg2['resource']]]['alias'],
                 field = arg2['name']
             )
-            if arg2_srid != CRS_DEFAULT_DATABASE: 
+            if arg2_srid != CRS_DEFAULT_DATABASE:
                 aliased_arg2 = 'ST_Transform({field}, {srid})'.format(
                 field = aliased_arg2,
                 srid = CRS_DEFAULT_DATABASE
             )
-            return ('(' + spatial_operator +'(ST_Transform(ST_GeomFromText(%s, 3857), ' + 
-                    str(CRS_DEFAULT_DATABASE) + 
+            return ('(' + spatial_operator +'(ST_Transform(ST_GeomFromText(%s, 3857), ' +
+                    str(CRS_DEFAULT_DATABASE) +
                     '), ' + aliased_arg2 + ') = TRUE)', shapely.wkt.dumps(arg1))
         else:
-            return ('(' + spatial_operator +'(ST_Transform(ST_GeomFromText(%s, 3857), ' + 
-                    str(CRS_DEFAULT_DATABASE) + 
-                    '), ST_Transform(ST_GeomFromText(%s, 3857), ' + 
+            return ('(' + spatial_operator +'(ST_Transform(ST_GeomFromText(%s, 3857), ' +
+                    str(CRS_DEFAULT_DATABASE) +
+                    '), ST_Transform(ST_GeomFromText(%s, 3857), ' +
                     str(CRS_DEFAULT_DATABASE) + '))  = TRUE)', shapely.wkt.dumps(arg1), shapely.wkt.dumps(arg2))
 
     def _is_field(self, metadata, mapping, f):
@@ -860,7 +860,7 @@ class QueryExecutor:
 
         if not 'name' in f:
             return False
-       
+
         if 'resource' in f and (not f['resource'] in mapping or not mapping[f['resource']] in metadata):
             raise DataException('Resource {resource} does not exist.'.format(resource = f['resource']))
 
@@ -888,7 +888,7 @@ class QueryExecutor:
         if not self._is_field(metadata, mapping, f):
             return None
 
-        return metadata[mapping[f['resource']]]['fields'][f['name']]['type'] 
+        return metadata[mapping[f['resource']]]['fields'][f['name']]['type']
 
     def _is_field_geom(self, metadata, mapping, f):
         if not self._is_field(metadata, mapping, f):
@@ -920,7 +920,7 @@ class QueryExecutor:
     def getResources(self, config, connection=None):
         engine = None
         auto_close = False
-        
+
         resources = None
         result = {}
 
@@ -939,7 +939,7 @@ class QueryExecutor:
                             resource_db.geometry_type as geometry_type,
                             resource_wms.wms_server as wms_server,
                             resource_wms.wms_layer as wms_layer
-                    from 
+                    from
                         (
                         select  id as resource_id,
                                 json_extract_path_text((extras::json),'vectorstorer_resource') as vector_storer,
@@ -1003,7 +1003,7 @@ class QueryExecutor:
     def describeResource(self, config, connection=None, id=None):
         engine = None
         auto_close = False
-        
+
         result = {}
         srid = None
         geometry_column = None
