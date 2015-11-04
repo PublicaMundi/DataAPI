@@ -30,6 +30,7 @@ CRS_SUPPORTED = ['EPSG:900913', 'EPSG:3857', 'EPSG:4326', 'EPSG:2100', 'EPSG:425
 CRS_DEFAULT_DATABASE = 2100
 CRS_DEFAULT_OUTPUT = 3857
 
+OP_LIKE = 'LIKE'
 OP_EQ = 'EQUAL'
 OP_NOT_EQ = 'NOT_EQUAL'
 OP_GT = 'GREATER'
@@ -42,12 +43,13 @@ OP_DISTANCE = 'DISTANCE'
 OP_CONTAINS = 'CONTAINS'
 OP_INTERSECTS = 'INTERSECTS'
 
-COMPARE_OPERATORS = [OP_EQ, OP_NOT_EQ, OP_GT, OP_GET, OP_LT, OP_LET]
-COMPARE_EXPRESSIONS = ['=', '<>', '>', '>=', '<', '<=']
+COMPARE_OPERATORS = [OP_EQ, OP_NOT_EQ, OP_GT, OP_GET, OP_LT, OP_LET, OP_LIKE]
+COMPARE_EXPRESSIONS = ['=', '<>', '>', '>=', '<', '<=', 'like']
 
+SPATIAL_COMPARE_OPERATORS = [OP_EQ, OP_GT, OP_GET, OP_LT, OP_LET]
 SPATIAL_OPERATORS = [OP_AREA, OP_DISTANCE, OP_CONTAINS, OP_INTERSECTS]
 
-ALL_OPERATORS = [OP_EQ, OP_NOT_EQ, OP_GT, OP_GET, OP_LT, OP_LET, OP_AREA, OP_DISTANCE, OP_CONTAINS, OP_INTERSECTS]
+ALL_OPERATORS = [OP_EQ, OP_NOT_EQ, OP_GT, OP_GET, OP_LT, OP_LET, OP_LIKE, OP_AREA, OP_DISTANCE, OP_CONTAINS, OP_INTERSECTS]
 
 MAX_RESULT_ROWS = 10000
 
@@ -563,7 +565,8 @@ class QueryExecutor:
                 return self._create_filter_spatial(metadata, mapping, f, f['operator'])
 
         except ValueError as ex:
-            raise DataException('Operator {operator} is not supported.'.format(operator = f['operator']))
+            log.error(ex)
+            raise DataException('Failed to parse argument value for operator {operator}.'.format(operator = f['operator']))
 
         return None
 
@@ -591,6 +594,9 @@ class QueryExecutor:
             raise DataException('Operator {operator} does not support geometry types.'.format(operator = operator))
 
         if arg1_is_field and arg2_is_field:
+            if operator == OP_LIKE:
+                raise DataException('Operator {operator} does not support two fields as arguments.'.format(operator = operator))
+
             aliased_arg1 = '{table}."{field}"'.format(
                 table = metadata[mapping[arg1['resource']]]['alias'],
                 field = arg1['name']
@@ -606,11 +612,19 @@ class QueryExecutor:
                 field = arg1['name']
             )
             convert_to = ''
-            if arg1_type == 'varchar' and isinstance(arg2, numbers.Number):
-                if isinstance(arg2, int):
-                    convert_to = '::int'
-                if isinstance(arg2, float):
-                    convert_to = '::float'
+
+            if operator == OP_LIKE:
+                if arg1_type != 'varchar':
+                    raise DataException('Operator {operator} only supports text fields.'.format(operator = operator))
+
+                arg2 = u'%' + unicode(arg2) + u'%'
+            else:
+                if arg1_type == 'varchar' and isinstance(arg2, numbers.Number):
+                    if isinstance(arg2, int):
+                        convert_to = '::int'
+                    if isinstance(arg2, float):
+                        convert_to = '::float'
+
 
             return ('(' +aliased_arg1 + convert_to + ' ' + expression + ' %s)', arg2)
         elif not arg1_is_field and arg2_is_field:
@@ -619,25 +633,35 @@ class QueryExecutor:
                 field = arg2['name']
             )
             convert_to = ''
-            if arg2_type == 'varchar' and isinstance(arg1, numbers.Number):
-                if isinstance(arg1, int):
-                    convert_to = '::int'
-                if isinstance(arg1, float):
-                    convert_to = '::float'
+
+            if operator == OP_LIKE:
+                if arg2_type != 'varchar':
+                    raise DataException('Operator {operator} only supports text fields.'.format(operator = operator))
+
+                arg1 = u'%' + unicode(arg1) + u'%'
+            else:
+                if arg2_type == 'varchar' and isinstance(arg1, numbers.Number):
+                    if isinstance(arg1, int):
+                        convert_to = '::int'
+                    if isinstance(arg1, float):
+                        convert_to = '::float'
 
             return ('(' + aliased_arg2 + convert_to  + ' ' + expression + ' %s)', arg1)
         else:
+            if operator == OP_LIKE:
+                raise DataException('Operator {operator} does not support two fields as literals.'.format(operator = operator))
+
             return ('(%s ' + expression + ' %s)', arg1, arg2)
 
     def _create_filter_spatial(self, metadata, mapping, f, operator):
         if operator == OP_AREA:
             if len(f['arguments']) != 3:
                 raise DataException('Operator {operator} expects three arguments.'.format(operator = operator))
-            return self._create_filter_area(metadata, mapping, f, operator)
+            return self._create_filter_spatial_area(metadata, mapping, f, operator)
         elif operator == OP_DISTANCE:
             if len(f['arguments']) != 4:
                 raise DataException('Operator {operator} expects four arguments.'.format(operator = operator))
-            return self._create_filter_distance(metadata, mapping, f, operator)
+            return self._create_filter_spatial_distance(metadata, mapping, f, operator)
         elif operator == OP_CONTAINS:
             if len(f['arguments']) != 2:
                 raise DataException('Operator {operator} expects two.'.format(operator = operator))
@@ -647,12 +671,12 @@ class QueryExecutor:
                 raise DataException('Operator {operator} expects two arguments.'.format(operator = operator))
             return self._create_filter_spatial_relation(metadata, mapping, f, operator, 'ST_Intersects')
 
-    def _create_filter_area(self, metadata, mapping, f, operator):
+    def _create_filter_spatial_area(self, metadata, mapping, f, operator):
         arg1 = f['arguments'][0]
         arg2 = f['arguments'][1]
         arg3 = f['arguments'][2]
 
-        if arg2 in COMPARE_OPERATORS:
+        if arg2 in SPATIAL_COMPARE_OPERATORS:
             arg2 = COMPARE_EXPRESSIONS[COMPARE_OPERATORS.index(arg2)]
         else:
             raise DataException('Expression {expression} for operator {operator} is not valid.'.format(expression = arg2, operator = operator))
@@ -686,13 +710,13 @@ class QueryExecutor:
         else:
             return ('(ST_Area(ST_GeomFromText(%s, 3857)) ' + arg2 + ' %s)', shapely.wkt.dumps(arg1), arg3)
 
-    def _create_filter_distance(self, metadata, mapping, f, operator):
+    def _create_filter_spatial_distance(self, metadata, mapping, f, operator):
         arg1 = f['arguments'][0]
         arg2 = f['arguments'][1]
         arg3 = f['arguments'][2]
         arg4 = f['arguments'][3]
 
-        if arg3 in COMPARE_OPERATORS:
+        if arg3 in SPATIAL_COMPARE_OPERATORS:
             arg3 = COMPARE_EXPRESSIONS[COMPARE_OPERATORS.index(arg3)]
         else:
             raise DataException('Expression {expression} for operator {operator} is not valid.'.format(expression = arg3, operator = operator))
