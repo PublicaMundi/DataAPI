@@ -46,6 +46,8 @@ OP_INTERSECTS = 'INTERSECTS'
 COMPARE_OPERATORS = [OP_EQ, OP_NOT_EQ, OP_GT, OP_GET, OP_LT, OP_LET, OP_LIKE]
 COMPARE_EXPRESSIONS = ['=', '<>', '>', '>=', '<', '<=', 'like']
 
+FIELD_OPERATORS = [OP_AREA, OP_DISTANCE]
+
 SPATIAL_COMPARE_OPERATORS = [OP_EQ, OP_GT, OP_GET, OP_LT, OP_LET]
 SPATIAL_OPERATORS = [OP_AREA, OP_DISTANCE, OP_CONTAINS, OP_INTERSECTS]
 
@@ -304,7 +306,29 @@ class QueryExecutor:
             field_name = None
             field_alias = None
 
+            is_computed = False
+
             if type(query['fields'][i]) is dict:
+                if 'operator' in query['fields'][i]:
+                    computed_field = self._create_computed_field(query_metadata, resource_mapping, query['fields'][i])
+
+                    if computed_field['alias'] in parsed_query['fields']:
+                       raise DataException(u'Computed field {field} is ambiguous.'.format(
+                            field = computed_field['alias']
+                        ))
+
+                    parsed_query['fields'][computed_field['alias']] = {
+                        'fullname' : computed_field['alias'],
+                        'name' : computed_field['alias'],
+                        'alias' : computed_field['alias'],
+                        'type' : None,
+                        'is_geom' : computed_field['is_geom'],
+                        'srid' : None,
+                        'expression' : computed_field['expression']
+                    }
+
+                    continue
+
                 if 'name' in query['fields'][i]:
                     field_name = query['fields'][i]['name']
                 else:
@@ -397,6 +421,7 @@ class QueryExecutor:
                     sort_resource = None
                     sort_name = None
                     sort_desc = False
+                    is_computed = False
 
                     if type(query['sort'][i]) is dict:
                         if 'name' in query['sort'][i]:
@@ -412,13 +437,16 @@ class QueryExecutor:
                     else:
                         raise DataException('Sorting field is malformed. Instance of string or dictionary is expected.')
 
-                    # Check if a field name or an alias is specified. In the latter case, set the database field name
+                    # If this is not a computed field, check if a field name or an alias is specified.
+                    # In the latter case, set the database field name
                     if sort_name in parsed_query['fields']:
-                        if parsed_query['fields'][sort_name]['name'] != sort_name:
+                        if 'expression' in parsed_query['fields'][sort_name]:
+                            is_computed = True
+                        elif parsed_query['fields'][sort_name]['name'] != sort_name:
                            sort_name = parsed_query['fields'][sort_name]['name']
 
                     # Set resource if missing
-                    if sort_resource is None:
+                    if not is_computed and sort_resource is None:
                         resources = self._get_resources_by_field_name(query_metadata, sort_name)
 
                         if len(resources) == 0:
@@ -434,17 +462,26 @@ class QueryExecutor:
                             ))
 
                     # Check if resource exists in metadata
-                    if not sort_resource in resource_mapping or not resource_mapping[sort_resource] in query_metadata:
+                    if (not is_computed) and (not sort_resource in resource_mapping or not resource_mapping[sort_resource] in query_metadata):
                         raise DataException(u'Resource {resource} for sorting field {field} does not exist.'.format(
                             resource = sort_resource,
                             field = sort_name
                         ))
 
-                    parsed_query['sort'].append('{table}."{field}" {desc}'.format(
-                        table = query_metadata[resource_mapping[sort_resource]]['alias'],
-                        field = sort_name,
-                        desc = 'desc' if sort_desc else ''
-                    ))
+                    if is_computed:
+                        sort_params = ('{expr} {desc}'.format(
+                            expr = parsed_query['fields'][sort_name]['expression'][0],
+                            desc = 'desc' if sort_desc else ''
+                        ), )
+                        sort_params += parsed_query['fields'][sort_name]['expression'][1:]
+
+                        parsed_query['sort'].append(sort_params)
+                    else:
+                        parsed_query['sort'].append(('{table}."{field}" {desc}'.format(
+                            table = query_metadata[resource_mapping[sort_resource]]['alias'],
+                            field = sort_name,
+                            desc = 'desc' if sort_desc else ''
+                        ), ))
 
         # Build SQL command
         fields = []
@@ -455,17 +492,25 @@ class QueryExecutor:
         orderby_clause = ''
 
         # Select clause fields
-        for field in parsed_query['fields']:
-            if parsed_query['fields'][field]['is_geom'] and parsed_query['fields'][field]['srid'] != srid:
+        for alias in parsed_query['fields']:
+            field = parsed_query['fields'][alias]
+
+            if 'expression' in field:
+                fields.append('{field} as "{alias}"'.format(
+                    field = field['expression'][0],
+                    alias = field['alias']
+                ))
+                values += field['expression'][1:]
+            elif field['is_geom'] and field['srid'] != srid:
                 fields.append('ST_Transform({geom}, {srid}) as "{alias}"'.format(
-                    geom = parsed_query['fields'][field]['fullname'],
+                    geom = field['fullname'],
                     srid = srid,
-                    alias = parsed_query['fields'][field]['alias']
+                    alias = field['alias']
                 ))
             else:
                 fields.append('{field} as "{alias}"'.format(
-                    field = parsed_query['fields'][field]['fullname'],
-                    alias = parsed_query['fields'][field]['alias']
+                    field = field['fullname'],
+                    alias = field['alias']
                 ))
 
         # From clause tables
@@ -482,7 +527,9 @@ class QueryExecutor:
 
         # Order by clause
         if len(parsed_query['sort']) > 0:
-            orderby_clause = u'order by ' +u', '.join(parsed_query['sort'])
+            orderby_clause = u'order by ' + u', '.join([f[0] for f in parsed_query['sort']])
+            for order_values in [f[1:] for f in parsed_query['sort']]:
+                values += order_values
 
         # Build SQL
         sql = "select distinct {fields} from {tables} {where} {orderby} limit {limit} offset {offset};".format(
@@ -874,6 +921,151 @@ class QueryExecutor:
                     str(CRS_DEFAULT_DATABASE) +
                     '), ST_Transform(ST_GeomFromText(%s, 3857), ' +
                     str(CRS_DEFAULT_DATABASE) + '))  = TRUE)', shapely.wkt.dumps(arg1), shapely.wkt.dumps(arg2))
+
+    def _create_computed_field(self, metadata, mapping, f):
+        if not type(f) is dict:
+            raise DataException('Field must be a dictionary.')
+
+        if not 'operator' in f:
+            raise DataException('Parameter operator is missing for computed field.')
+
+        if not f['operator'] in FIELD_OPERATORS:
+            raise DataException('Operator {operator} is not supported for computed fields.'.format(operator = f['operator']))
+
+        if not 'arguments' in f:
+            raise DataException('Parameter arguments is missing for computed field.')
+
+        if not type(f['arguments']) is list or len(f['arguments']) == 0:
+            raise DataException('Parameter arguments must be a list with at least one member.')
+
+        if not 'alias' in f:
+            raise DataException('Parameter alias is missing for computed field.')
+
+        operator = f['operator']
+
+        if operator == OP_AREA:
+            if len(f['arguments']) !=1:
+                raise DataException('Operator {operator} expects one argument for computed fields.'.format(operator = operator))
+            return {
+                'alias' : f['alias'],
+                'expression' : self._create_computed_field_spatial_area(metadata, mapping, f, operator),
+                'is_geom': False
+            }
+        elif operator == OP_DISTANCE:
+            if len(f['arguments']) != 2:
+                raise DataException('Operator {operator} expects two arguments for computed fields.'.format(operator = operator))
+            return {
+                'alias' : f['alias'],
+                'expression' : self._create_computed_field_spatial_distance(metadata, mapping, f, operator),
+                'is_geom': False
+            }
+
+    def _create_computed_field_spatial_area(self, metadata, mapping, f, operator):
+        arg = f['arguments'][0]
+
+        arg_is_field = self._is_field(metadata, mapping, arg)
+        arg_srid = CRS_DEFAULT_DATABASE
+        arg_is_field_geom = self._is_field_geom(metadata, mapping, arg)
+        if arg_is_field_geom:
+            arg_srid = self._get_field_srid(metadata, mapping, arg)
+        arg_is_geom = self._is_geom(metadata, arg)
+
+        if not arg_is_field_geom and not arg_is_geom:
+            raise DataException('First argument for computed field {operator} must be a geometry field or a GeoJSON encoded geometry.'.format(operator = operator))
+
+        if arg_is_field_geom:
+            aliased_arg = '{table}."{field}"'.format(
+                table = metadata[mapping[arg['resource']]]['alias'],
+                field = arg['name']
+            )
+
+            if arg_srid != CRS_DEFAULT_DATABASE:
+                aliased_arg = 'ST_Transform({field}, {srid})'.format(
+                field = aliased_arg,
+                srid = CRS_DEFAULT_DATABASE
+            )
+
+            return ('(ST_Area(' + aliased_arg + '))', )
+        else:
+            return ('(ST_Area(ST_GeomFromText(%s, 3857)))', shapely.wkt.dumps(arg), )
+
+    def _create_computed_field_spatial_distance(self, metadata, mapping, f, operator):
+        arg1 = f['arguments'][0]
+        arg2 = f['arguments'][1]
+
+        arg1_is_field = self._is_field(metadata, mapping, arg1)
+        arg2_is_field = self._is_field(metadata, mapping, arg2)
+
+        arg1_srid = CRS_DEFAULT_DATABASE
+        arg2_srid = CRS_DEFAULT_DATABASE
+
+        arg1_is_field_geom = self._is_field_geom(metadata, mapping, arg1)
+        if arg1_is_field_geom:
+            arg1_srid = self._get_field_srid(metadata, mapping, arg1)
+
+        arg2_is_field_geom = self._is_field_geom(metadata, mapping, arg2)
+        if arg2_is_field_geom:
+            arg2_srid = self._get_field_srid(metadata, mapping, arg2)
+
+        arg1_is_geom = self._is_geom(metadata, arg1)
+        arg2_is_geom = self._is_geom(metadata, arg2)
+
+        if not arg1_is_field_geom and not arg1_is_geom:
+            raise DataException('First argument for computed field {operator} must be a geometry field or a GeoJSON encoded geometry.'.format(operator = OP_DISTANCE))
+
+        if not arg2_is_field_geom and not arg2_is_geom:
+            raise DataException('Second argument for computed field {operator} must be a geometry field or a GeoJSON encoded geometry.'.format(operator = OP_DISTANCE))
+
+        if arg1_is_field_geom and arg2_is_field_geom:
+            aliased_arg1 = '{table}."{field}"'.format(
+                table = metadata[mapping[arg1['resource']]]['alias'],
+                field = arg1['name']
+            )
+            if arg1_srid != CRS_DEFAULT_DATABASE:
+                aliased_arg1 = 'ST_Transform({field}, {srid})'.format(
+                field = aliased_arg1,
+                srid = CRS_DEFAULT_DATABASE
+            )
+
+            aliased_arg2 = '{table}."{field}"'.format(
+                table = metadata[mapping[arg2['resource']]]['alias'],
+                field = arg2['name']
+            )
+            if arg2_srid != CRS_DEFAULT_DATABASE:
+                aliased_arg2 = 'ST_Transform({field}, {srid})'.format(
+                field = aliased_arg2,
+                srid = CRS_DEFAULT_DATABASE
+            )
+            return ('(ST_Distance(' + aliased_arg1 + ',' + aliased_arg2 + '))', )
+        elif arg1_is_field_geom and not arg2_is_field_geom:
+            aliased_arg1 = '{table}."{field}"'.format(
+                table = metadata[mapping[arg1['resource']]]['alias'],
+                field = arg1['name']
+            )
+            if arg1_srid != CRS_DEFAULT_DATABASE:
+                aliased_arg1 = 'ST_Transform({field}, {srid})'.format(
+                field = aliased_arg1,
+                srid = CRS_DEFAULT_DATABASE
+            )
+            return ('(ST_Distance(' + aliased_arg1 + ', ST_Transform(ST_GeomFromText(%s, 3857), ' +
+                    str(CRS_DEFAULT_DATABASE) + ')))', shapely.wkt.dumps(arg2), )
+        elif not arg1_is_field_geom and arg2_is_field_geom:
+            aliased_arg2 = '{table}."{field}"'.format(
+                table = metadata[mapping[arg2['resource']]]['alias'],
+                field = arg2['name']
+            )
+            if arg2_srid != CRS_DEFAULT_DATABASE:
+                aliased_arg2 = 'ST_Transform({field}, {srid})'.format(
+                field = aliased_arg2,
+                srid = CRS_DEFAULT_DATABASE
+            )
+            return ('(ST_Distance(' + aliased_arg2 + ', ST_Transform(ST_GeomFromText(%s, 3857), ' +
+                    str(CRS_DEFAULT_DATABASE) + ')))', shapely.wkt.dumps(arg1), )
+        else:
+            return ('(ST_Distance(ST_Transform(ST_GeomFromText(%s, 3857), ' +
+                    str(CRS_DEFAULT_DATABASE) +
+                    '), ST_Transform(ST_GeomFromText(%s, 3857), ' +
+                    str(CRS_DEFAULT_DATABASE) + ')))', shapely.wkt.dumps(arg1), shapely.wkt.dumps(arg2), )
 
     def _is_field(self, metadata, mapping, f):
         if f is None:
