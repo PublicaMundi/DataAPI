@@ -220,6 +220,9 @@ class QueryExecutor:
         if not type(query['resources']) is list:
             raise DataException('Parameter resource should be a list with at least one item.')
 
+        if len(query['resources']) == 0:
+            raise DataException('At least one resource must be selected.')
+
         # Same as metadata but contains only the resources that are being accessed by the specific query
         query_metadata = {}
         # Used for managing resource name to alias mappings
@@ -349,6 +352,7 @@ class QueryExecutor:
             # Set resource if not set
             if field_resource is None:
                 resources = self._get_resources_by_field_name(query_metadata, field_name)
+
                 if len(resources) == 0:
                     raise DataException(u'Field {field} does not exist.'.format(
                         field = field_name
@@ -1198,16 +1202,25 @@ class QueryExecutor:
 
             resources = connection.execute(sql)
             for resource in resources:
-                result[resource['db_resource_id']] = {
+                wms_resource = None if resource['wms_resource_id'] is None else resource['wms_resource_id']
+
+                resource_properties = {
                     'table': resource['db_resource_id'],
                     'resource_name' : resource['resource_name'],
                     'package_title' : resource['package_title'],
                     'package_notes' : resource['package_notes'],
-                    'wms': None if resource['wms_resource_id'] is None else resource['wms_resource_id'],
+                    'wms': wms_resource,
                     'wms_server': None if resource['wms_server'] is None else resource['wms_server'],
                     'wms_layer': None if resource['wms_layer'] is None else resource['wms_layer'],
                     'geometry_type': resource['geometry_type']
                 }
+
+                result[resource['db_resource_id']] = resource_properties
+
+                # Allow users to use a wms unique id as a table resource since the id values are unique and there is
+                # an 1:1 relation
+                if not wms_resource is None:
+                    result[wms_resource] = resource_properties
         finally:
             if not resources is None:
                 resources.close()
