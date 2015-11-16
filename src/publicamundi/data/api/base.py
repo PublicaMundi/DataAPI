@@ -125,7 +125,7 @@ class QueryExecutor:
                 'engine_data' : engine_data,
                 'connection_ckan' : connection_ckan,
                 'connection_data' : connection_data,
-                'resources' : self.getResources(config, connection_ckan),
+                'resources' : self.get_resources(config, connection_ckan),
                 'metadata' : metadata,
                 'elapsed_time' : 0
             }
@@ -250,6 +250,14 @@ class QueryExecutor:
             else:
                 raise DataException('Resource parameter is malformed. Instance of string or dictionary is expected.')
 
+            # Allow users to use a wms unique id as a table resource since the id values are unique and there is
+            # an 1:1 relation
+            if not resource_name is None and not resource_name in context['resources']:
+                for r in context['resources']:
+                    if context['resources'][r]['wms'] == resource_name:
+                        resource_name = r
+                        break
+
             # Mappings for handling aliases
             resource_mapping[resource_name] = resource_name
             resource_mapping[resource_alias] = resource_name
@@ -262,7 +270,7 @@ class QueryExecutor:
                     db_resource['alias'] = 't{index}'.format(index = (len(context['metadata'].keys()) + 1))
 
                     # Add fields
-                    db_fields = self.describeResource(config, connection_data, resource_name)
+                    db_fields = self.describe_resource(config, resource_name)
                     db_resource['srid'] = db_fields['srid']
                     db_resource['geometry_column'] = db_fields['geometry_column']
                     db_resource['fields'] = db_fields['fields']
@@ -1137,7 +1145,67 @@ class QueryExecutor:
 
         return resources
 
-    def getResources(self, config, connection=None):
+    def _get_table_resource_from_wms_resource(self, config, id):
+        engine = None
+
+        resources = None
+
+        try:
+            engine = create_engine(config[CONFIG_SQL_CATALOG], echo=False)
+            connection = engine.connect()
+
+            sql = text(u"""
+                    select  resource_db.resource_id as db_resource_id,
+                            resource_wms.resource_id as wms_resource_id
+                    from
+                        (
+                        select  id as resource_id,
+                                json_extract_path_text((extras::json),'parent_resource_id') as resource_parent_id,
+                                resource_group_id as group_id
+                        from	resource_revision
+                        where	format = 'data_table'
+                                and current = True
+                                and state = 'active'
+                                and json_extract_path_text((extras::json),'vectorstorer_resource')  = 'True'
+                        ) as resource_db
+                        left outer join
+                            (
+                            select	id as resource_id,
+                                    json_extract_path_text((extras::json),'parent_resource_id') as resource_parent_id,
+                                    resource_group_id as group_id
+                            from	resource_revision
+                            where	format = 'wms'
+                                    and current = True
+                                    and state = 'active'
+                                    and json_extract_path_text((extras::json),'vectorstorer_resource')  = 'True'
+                            ) as resource_wms
+                                on	resource_db.group_id = resource_wms.group_id
+                                    and resource_db.resource_id = resource_wms.resource_parent_id
+                        left outer join resource_group_revision
+                                on	resource_group_revision.id = resource_db.group_id
+                                    and resource_group_revision.state = 'active'
+                                    and resource_group_revision.current = True
+                        left outer join	package_revision
+                                on	resource_group_revision.package_id = package_revision.id
+                                    and package_revision.state = 'active'
+                                    and package_revision.current = True
+                        where resource_db.resource_id = :resource1 or resource_wms.resource_id = :resource2 limit 1;
+            """)
+
+            resources = connection.execute(sql, resource1 = id, resource2 = id)
+
+            for resource in resources:
+                return resource['db_resource_id']
+
+        finally:
+            if not resources is None:
+                resources.close()
+            if not connection is None:
+                connection.close()
+
+        return id
+
+    def get_resources(self, config, connection=None):
         engine = None
         auto_close = False
 
@@ -1177,7 +1245,7 @@ class QueryExecutor:
                             (
                             select	id as resource_id,
                                     json_extract_path_text((extras::json),'vectorstorer_resource') as vector_storer,
-                                    json_extract_path_text((extras::json),'geometry') as ggeometry_type,
+                                    json_extract_path_text((extras::json),'geometry') as geometry_type,
                                     json_extract_path_text((extras::json),'parent_resource_id') as resource_parent_id,
                                     resource_group_id as group_id,
                                     json_extract_path_text((extras::json),'wms_server') as wms_server,
@@ -1202,25 +1270,18 @@ class QueryExecutor:
 
             resources = connection.execute(sql)
             for resource in resources:
-                wms_resource = None if resource['wms_resource_id'] is None else resource['wms_resource_id']
-
                 resource_properties = {
                     'table': resource['db_resource_id'],
                     'resource_name' : resource['resource_name'],
                     'package_title' : resource['package_title'],
                     'package_notes' : resource['package_notes'],
-                    'wms': wms_resource,
+                    'wms': None if resource['wms_resource_id'] is None else resource['wms_resource_id'],
                     'wms_server': None if resource['wms_server'] is None else resource['wms_server'],
                     'wms_layer': None if resource['wms_layer'] is None else resource['wms_layer'],
                     'geometry_type': resource['geometry_type']
                 }
 
                 result[resource['db_resource_id']] = resource_properties
-
-                # Allow users to use a wms unique id as a table resource since the id values are unique and there is
-                # an 1:1 relation
-                if not wms_resource is None:
-                    result[wms_resource] = resource_properties
         finally:
             if not resources is None:
                 resources.close()
@@ -1229,19 +1290,19 @@ class QueryExecutor:
 
         return result
 
-    def describeResource(self, config, connection=None, id=None):
+    def describe_resource(self, config, id=None):
         engine = None
-        auto_close = False
 
         result = {}
         srid = None
         geometry_column = None
 
         try:
-            if connection is None:
-                auto_close = True
-                engine = create_engine(config[CONFIG_SQL_DATA], echo=False)
-                connection = engine.connect()
+            # Map wms resource id to table resource id
+            id = self._get_table_resource_from_wms_resource(config, id)
+
+            engine = create_engine(config[CONFIG_SQL_DATA], echo=False)
+            connection = engine.connect()
 
             sql = text(u"""
                 SELECT	attname::varchar as "name",
@@ -1278,7 +1339,7 @@ class QueryExecutor:
                     geometry_column = field['name'].decode('utf-8')
                     srid = field['srid']
         finally:
-            if not connection is None and auto_close:
+            if not connection is None:
                 connection.close()
 
         return {
