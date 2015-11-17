@@ -141,7 +141,13 @@ class QueryExecutor:
                 if output_format == QUERY_FORMAT_GEOJSON:
                     partial_result = {
                         'features': partial_result,
-                        'type': 'FeatureCollection'
+                        'type': 'FeatureCollection',
+                        'crs': {
+                            'type': 'name',
+                            'properties': {
+                                'name': 'urn:ogc:def:crs:EPSG::' + str(crs)
+                            }
+                        }
                     }
 
                 query_result.append(partial_result)
