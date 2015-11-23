@@ -58,8 +58,10 @@ MAX_RESULT_ROWS = 10000
 CONFIG_SQL_CATALOG = 'sqlalchemy.catalog'
 CONFIG_SQL_DATA = 'sqlalchemy.vectorstore'
 CONFIG_SQL_TIMEOUT = 'timeout'
+CONFIG_MAX_RESOURCE = 'resource.max.count'
 
 DEFAULT_SQL_TIMEOUT = 30000
+DEFAULT_MAX_RESOURCE = 4
 
 # See http://www.postgresql.org/docs/9.3/static/errcodes-appendix.html
 _PG_ERR_CODE = {
@@ -228,6 +230,14 @@ class QueryExecutor:
 
         if len(query['resources']) == 0:
             raise DataException('At least one resource must be selected.')
+
+        max_resource_count = config[CONFIG_MAX_RESOURCE] if CONFIG_MAX_RESOURCE in config else DEFAULT_MAX_RESOURCE
+
+        if len(query['resources']) > max_resource_count:
+            raise DataException('Only up to {count} resources are allowed per query.'.format(
+                count = max_resource_count
+            ))
+
 
         # Same as metadata but contains only the resources that are being accessed by the specific query
         query_metadata = {}
