@@ -160,21 +160,22 @@ class QueryExecutor:
                 'metadata' : context['metadata'],
                 'format' : output_format
             }
-        except DataException as apiEx:
-            raise
         except DBAPIError as dbEx:
-            print dbEx.message
-            log.error(dbEx)
-
-            message = 'Unhandled exception has occured.'
+            message = 'Database exception has occured: '
             if dbEx.orig.pgcode == _PG_ERR_CODE['query_canceled']:
-                message = 'Execution exceeded timeout.'
+                message = message + 'Execution exceeded timeout.'
+            else:
+                message = message + 'Unhandled exception has occured.'
+
+            log.exception(message)
 
             raise DataException(message, dbEx)
         except Exception as ex:
-            log.error(ex)
+            message = 'Unhandled exception has occured.'
 
-            raise DataException('Unhandled exception has occured.', ex)
+            log.exception(message)
+
+            raise DataException(message, ex)
         finally:
             if not connection_ckan is None:
                 connection_ckan.close()
@@ -640,8 +641,11 @@ class QueryExecutor:
                 return self._create_filter_spatial(metadata, mapping, f, f['operator'])
 
         except ValueError as ex:
-            log.error(ex)
-            raise DataException('Failed to parse argument value for operator {operator}.'.format(operator = f['operator']))
+            message = 'Failed to parse argument value for operator {operator}.'.format(operator = f['operator'])
+
+            log.exception(message)
+
+            raise DataException(message)
 
         return None
 
