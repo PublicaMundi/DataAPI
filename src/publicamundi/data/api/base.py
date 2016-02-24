@@ -1344,19 +1344,19 @@ class QueryExecutor:
 
             fields = connection.execute(sql, resource = id).fetchall()
             for field in fields:
-                if field['name'].decode('utf-8').startswith('_'):
+                if field['name'].startswith('_'):
                     continue
 
-                result[field['name'].decode('utf-8')] = {
-                    'name': field['name'].decode('utf-8'),
-                    'type': field['type'].decode('utf-8')
+                result[field['name']] = {
+                    'name': field['name'],
+                    'type': field['type']
                 }
 
                 if not field['srid'] is None:
                     if not srid is None:
                         raise DataException('More than 1 geometry columns found in resource {id}'.format(id = id))
 
-                    geometry_column = field['name'].decode('utf-8')
+                    geometry_column = field['name']
                     srid = field['srid']
         finally:
             if not connection is None:
